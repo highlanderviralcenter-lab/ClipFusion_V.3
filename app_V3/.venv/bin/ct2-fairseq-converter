@@ -1,0 +1,6 @@
+#!/home/highlander/todosClipFusion/ClipFusion_V.3/app_V3/.venv/bin/python3
+import sys
+from ctranslate2.converters.fairseq import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())
