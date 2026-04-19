@@ -5,8 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
-from core.pipeline import Pipeline
-from ..infra.db import list_projects
+from .core.pipeline import Pipeline
+from .infra.db import list_projects
 
 
 def main():
@@ -29,6 +29,9 @@ def main():
     p_proc.add_argument("--device", default="cuda")
     p_proc.add_argument("--max-cuts", type=int, default=5)
     p_proc.add_argument("--output", "-o", default=None)
+    p_proc.add_argument("--prompt-out", default=None, help="Salva prompt para IA externa (sem API)")
+    p_proc.add_argument("--prompt-only", action="store_true", help="Gera prompt e encerra sem renderizar")
+    p_proc.add_argument("--ai-response", default=None, help="JSON/resposta da IA externa para reranquear")
     p_proc.set_defaults(func=cmd_process)
 
     # Listar
@@ -40,25 +43,30 @@ def main():
 
 
 def cmd_transcribe(args):
-    from ..core.audio_processor import AudioProcessor
-    from ..core.transcriber import WhisperTranscriber
+    from .core.audio_processor import AudioProcessor
+    from .core.transcriber import WhisperTranscriber
     
     print("🔧 Extraindo áudio...")
     audio = AudioProcessor()
     audio_path = audio.extract_and_clean(args.input)
     
     print(f"🧠 Transcrevendo com {args.model}...")
-    trans = WhisperTranscriber(model_size=args.model, device=args.device)
+    trans = WhisperTranscriber(model_size=args.model, use_faster=True)
     result = trans.transcribe(audio_path)
-    result = trans.post_process_ptbr(result)
     
-    print(f"\n📝 TEXTO:\n{result.text}\n")
+    text = result.get("text", "")
+    segments = result.get("segments", [])
+    print(f"\n📝 TEXTO:\n{text}\n")
     print(f"📊 Estatísticas:")
-    print(f"   Palavras: {len(result.words)}")
-    print(f"   Segmentos: {len(result.segments)}")
+    print(f"   Palavras: {len(text.split())}")
+    print(f"   Segmentos: {len(segments)}")
     print(f"\n⏱️ Primeiras 20 palavras com timestamps:")
-    for w in result.words[:20]:
-        print(f"   {w.start:>6.2f}s → {w.end:>6.2f}s  {w.word}")
+    for seg in segments[:20]:
+        if isinstance(seg, dict):
+            s = float(seg.get("start", 0.0))
+            e = float(seg.get("end", 0.0))
+            t = str(seg.get("text", "")).strip()
+            print(f"   {s:>6.2f}s → {e:>6.2f}s  {t}")
 
 
 def cmd_process(args):
@@ -70,6 +78,9 @@ def cmd_process(args):
         protection=args.protection,
         max_cuts=args.max_cuts,
         output_dir=args.output,
+        export_prompt_path=args.prompt_out,
+        prompt_only=args.prompt_only,
+        ai_response_path=args.ai_response,
     )
     print(f"\n✅ Concluído! Arquivos gerados:")
     for o in outputs:
