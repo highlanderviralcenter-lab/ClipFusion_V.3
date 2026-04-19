@@ -4,9 +4,12 @@ Sem subvolumes, mas com compressão zstd ativa no filesystem.
 """
 import os
 import gc
-import sys
-import psutil
 from typing import Dict, Any
+
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None
 
 
 class MemoryManager:
@@ -44,8 +47,8 @@ class MemoryManager:
     
     def get_stats(self) -> Dict[str, Any]:
         """Snapshot atual da hierarquia de memória + BTRFS."""
-        mem = psutil.virtual_memory()
-        swap = psutil.swap_memory()
+        mem = self._virtual_memory()
+        swap = self._swap_memory()
         
         # zRAM stats
         zram_stats = {}
@@ -94,6 +97,62 @@ class MemoryManager:
             "btrfs_compression_ratio": btrfs_ratio,
             "swappiness": self.swappiness,
         }
+
+    def _virtual_memory(self):
+        if psutil is not None:
+            return psutil.virtual_memory()
+        # Fallback mínimo sem psutil
+        meminfo = {}
+        try:
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) != 2:
+                        continue
+                    key = parts[0].strip()
+                    value = parts[1].strip().split()[0]
+                    meminfo[key] = int(value) * 1024  # kB -> bytes
+        except Exception:
+            meminfo = {}
+
+        total = meminfo.get("MemTotal", 0)
+        available = meminfo.get("MemAvailable", meminfo.get("MemFree", 0))
+        used = max(total - available, 0)
+        percent = (used / total * 100.0) if total else 0.0
+
+        class _Mem:
+            pass
+        m = _Mem()
+        m.total = total
+        m.available = available
+        m.percent = percent
+        return m
+
+    def _swap_memory(self):
+        if psutil is not None:
+            return psutil.swap_memory()
+        total = 0
+        used = 0
+        try:
+            with open("/proc/swaps", "r", encoding="utf-8") as f:
+                lines = f.read().strip().splitlines()[1:]  # pula header
+            for line in lines:
+                parts = line.split()
+                if len(parts) >= 5:
+                    size_kb = int(parts[2])
+                    used_kb = int(parts[3])
+                    total += size_kb * 1024
+                    used += used_kb * 1024
+        except Exception:
+            pass
+        percent = (used / total * 100.0) if total else 0.0
+
+        class _Swap:
+            pass
+        s = _Swap()
+        s.used = used
+        s.percent = percent
+        return s
     
     def should_load_model(self, model_ram_mb: float) -> bool:
         """
@@ -140,7 +199,7 @@ class MemoryManager:
         except:
             pass
         
-        self.last_pressure = psutil.virtual_memory().percent
+        self.last_pressure = self._virtual_memory().percent
 
 
 # Singleton
